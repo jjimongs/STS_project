@@ -1,0 +1,75 @@
+from google.cloud import speech_v1p1beta1 as speech
+import os
+import pyaudio
+import time
+import threading
+
+# Google Cloud STT API 키 인증
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "C:\\Users\\wwsgb\\tts_json_key\\buoyant-mason-412215-845850c6db6c.json"
+
+class Transcriber:
+    def __init__(self):
+        self.client = speech.SpeechClient()
+        self.transcript = ""
+        self.last_transcript_time = time.time()
+        self.silence_threshold = 0.3  # 음성이 없는 것으로 간주되는 최소 시간 (초)
+
+    def transcribe_streaming(self):
+        while True:  # 스트림이 종료될 때마다 새로운 스트림을 시작
+            config = speech.RecognitionConfig(
+                encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
+                sample_rate_hertz=16000,
+                language_code="ko-KR",
+            )
+
+            streaming_config = speech.StreamingRecognitionConfig(
+                config=config, 
+                interim_results=True
+            )
+
+            p = pyaudio.PyAudio()  # PyAudio 인스턴스 생성
+            stream = p.open(format=pyaudio.paInt16,
+                            channels=1,
+                            rate=16000,
+                            input=True,
+                            frames_per_buffer=1024)
+
+            def generate_requests():
+                while True:
+                    data = stream.read(1024)
+                    if not data:
+                        break
+                    yield speech.StreamingRecognizeRequest(audio_content=data)
+
+            requests = generate_requests()
+
+            responses = self.client.streaming_recognize(streaming_config, requests)
+
+            for response in responses:
+                for result in response.results:
+                    if result.is_final:
+                        self.transcript = result.alternatives[0].transcript
+                        self.last_transcript_time = time.time()
+
+            stream.stop_stream()  # 스트림 정지
+            stream.close()  # 스트림 닫기
+            p.terminate()  # PyAudio 세션 종료
+
+    def monitor_silence(self):
+        while True:
+            if time.time() - self.last_transcript_time > self.silence_threshold:
+                if self.transcript:  # 트랜스크립트가 비어있지 않은 경우에만 출력
+                    print("Transcript: {}".format(self.transcript))
+                    self.transcript = ""
+                    self.last_transcript_time = time.time()
+                time.sleep(1)
+
+transcriber = Transcriber()
+transcription_thread = threading.Thread(target=transcriber.transcribe_streaming)
+monitor_thread = threading.Thread(target=transcriber.monitor_silence)
+
+transcription_thread.start()
+monitor_thread.start()
+
+transcription_thread.join()
+monitor_thread.join()
