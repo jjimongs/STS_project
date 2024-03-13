@@ -6,7 +6,7 @@ import threading
 import openai
 
 # Google Cloud STT API 키 인증
-os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "C:\\Users\\wwsgb\\tts_json_key\\buoyant-mason-412215-845850c6db6c.json"
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] =  "C:\\Users\\wwsgb\\Json_key\\stt_json_key\\buoyant-mason-412215-845850c6db6c.json"
 
 # OpenAI API 키 직접 설정
 openai.api_key = "key 입력"
