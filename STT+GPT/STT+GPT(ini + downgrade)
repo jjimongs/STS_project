@@ -1,0 +1,122 @@
+from google.cloud import speech_v1p1beta1 as speech
+import os
+import pyaudio
+import time
+import threading
+import openai
+import configparser
+
+# Google Cloud STT API 키 인증
+os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "C:\\Users\\wwsgb\\Json_key\\stt_json_key\\buoyant-mason-412215-845850c6db6c.json"
+
+# 설정파일 로드
+config = configparser.ConfigParser()
+config.read('config.ini')
+
+# OpenAI API 키 가져오기
+openai_api_key = config['openai']['api_key']
+
+# API 키 설정
+openai.api_key = openai_api_key
+
+# OpenAI GPT 응답을 받는 함수
+def get_gpt_response(text):
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",  # 적절한 챗 모델 선택
+            messages=[
+                {"role": "user", "content": text}
+            ]
+        )
+        return response.choices[0].message["content"].strip()
+    except Exception as e:
+        return f"An error occurred: {str(e)}"
+
+class Transcriber:
+    def __init__(self):
+        self.client = speech.SpeechClient()
+        self.transcript = ""             #변환 텍스트 저장 및 마지막 변환시간 저장할 변수 
+        self.last_transcript_time = time.time() 
+        self.silence_threshold = 0.3     #정지 감지할 시간 임계값 
+        self.running = True
+
+    def transcribe_streaming(self):
+        # running = True 인 동안 오디오 스트림 변환
+        while self.running:
+            config = speech.RecognitionConfig(
+                encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
+                sample_rate_hertz=16000,
+                language_code="ko-KR",
+            )
+
+            streaming_config = speech.StreamingRecognitionConfig(
+                config=config, 
+                interim_results=True
+            )
+
+            p = pyaudio.PyAudio()
+
+            #오디오 스트림 열기
+            stream = p.open(format=pyaudio.paInt16,
+                            channels=1,
+                            rate=16000,
+                            input=True,
+                            frames_per_buffer=1024)
+            
+            # 스트리밍 인식 요청 생성 함수
+            def generate_requests():
+                while True:
+                    data = stream.read(1024)
+                    if not data:
+                        break
+                    yield speech.StreamingRecognizeRequest(audio_content=data)
+
+            #스트리밍 요청 생성
+            requests = generate_requests()
+
+            # 스트리밍 음성 인식
+            responses = self.client.streaming_recognize(streaming_config, requests)
+
+            #스트리밍 음성 처리
+            for response in responses:
+                #최종 결과인지 확인
+                for result in response.results:
+                    if result.is_final:
+                        self.transcript = result.alternatives[0].transcript  # 인식된 텍스트 transcript에 할당
+                        self.last_transcript_time = time.time()              # 마지막 텍스트 변환시간 현재 시간으로 업데이트
+
+                        if self.transcript == "작동 그만해":
+                            self.running = False  # 프로그램 중지를 위한 false
+                            print("프로그램 중단")
+                            stream.stop_stream()
+                            stream.close()
+                            p.terminate()
+                            return
+                    
+    # 임계값 도달 -> 텍스트 변환 작업 수행
+    def monitor_silence(self):
+        while self.running:
+            if time.time() - self.last_transcript_time > self.silence_threshold:
+                if self.transcript:
+                    print("변환 텍스트: {}".format(self.transcript))
+                    gpt_response = get_gpt_response(self.transcript)
+                    print("GPT 응답: {}".format(gpt_response))
+
+                    #텍스트 초기화 및 마지막 텍스트 시간 입력
+                    self.transcript = ""
+                    self.last_transcript_time = time.time()
+
+                # 0.3초 기다렸다가 임계값 다시 확인
+                time.sleep(0.3)
+
+transcriber = Transcriber()
+transcription_thread = threading.Thread(target=transcriber.transcribe_streaming)
+monitor_thread = threading.Thread(target=transcriber.monitor_silence)
+
+#스레드 시작
+transcription_thread.start()
+monitor_thread.start()
+
+# 스레드 종료까지 대기
+transcription_thread.join()
+monitor_thread.join()
