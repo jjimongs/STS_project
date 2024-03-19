@@ -1,15 +1,14 @@
 import os
+import io
 import time
-import threading
+import openai
 import pyaudio
-import numpy as np
+import threading
 import configparser
-from google.cloud import speech_v1 as speech
-from google.cloud import texttospeech
 from pydub import AudioSegment
 from pydub.playback import play
-import io
-import openai
+from google.cloud import texttospeech
+from google.cloud import speech_v1 as speech
 
 # ffmpeg와 ffprobe 경로 직접 설정
 os.environ["PATH"] += os.pathsep + "C:\\Users\\wwsgb\\ffmpeg\\ffmpeg-6.1.1-full_build\\bin"
@@ -17,58 +16,87 @@ os.environ["PATH"] += os.pathsep + "C:\\Users\\wwsgb\\ffmpeg\\ffmpeg-6.1.1-full_
 # 설정파일 로드
 config = configparser.ConfigParser()
 config.read('config.ini')
-openai.api_key = config.get('api_keys', 'openai_key')
-
-# OpenAI GPT 응답을 받는 함수
-def get_gpt_response(text):
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "user", "content": text}
-            ]
-        )
-        return response.choices[0].message["content"].strip()
-    except Exception as e:
-        return f"An error occurred: {str(e)}"
-
-def text_to_speech(text):
-    # TTS API 인증 정보 설정
-    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "C:\\Users\\wwsgb\\Json_key\\tts_json_key\\buoyant-mason-412215-1df2f278305e.json"
-    tts_client = texttospeech.TextToSpeechClient()
-
-    synthesis_input = texttospeech.SynthesisInput(text=text)
-    voice = texttospeech.VoiceSelectionParams(
-        language_code="ko-KR",
-        ssml_gender=texttospeech.SsmlVoiceGender.NEUTRAL
-    )
-    audio_config = texttospeech.AudioConfig(
-        audio_encoding=texttospeech.AudioEncoding.MP3
-    )
-
-    response = tts_client.synthesize_speech(
-        input=synthesis_input,
-        voice=voice,
-        audio_config=audio_config
-    )
-
-    # io.BytesIO 객체로 응답 받은 오디오 데이터를 로드
-    audio = io.BytesIO(response.audio_content)
-    # io.BytesIO 객체를 사용해 AudioSegment 인스턴스 생성
-    song = AudioSegment.from_mp3(audio)
-    play(song)
+openai.api_key = config.get('api_key', 'openai_key')
 
 class Transcriber:
     def __init__(self):
         # STT API 인증 정보 설정
-            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "C:\\Users\\wwsgb\\Json_key\\stt_json_key\\buoyant-mason-412215-845850c6db6c.json"
-            self.client = speech.SpeechClient()
-            self.transcript = ""
-            self.last_transcript_time = time.time()
-            self.silence_threshold = 0.3
-            self.running = True
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "C:\\Users\\wwsgb\\Json_key\\stt_json_key\\buoyant-mason-412215-845850c6db6c.json"
+        self.client = speech.SpeechClient()
+        self.transcript = ""
+        self.last_transcript_time = time.time()
+        self.history = []                # 대화 이력 저장
+        self.silence_threshold = 5 * 60  # 5분간 대화 없을 시 리셋
+        self.running = True
+        self.is_speaking = False         #GPT 말하고 있는지에 대한 여부
+        self.interrupt = False           # 사용자 중단 요청 여부
+        self.setup_audio_stream()
+    
+    def setup_audio_stream(self):
+        self.pyaudio_instance = pyaudio.PyAudio()
+        self.stream = self.pyaudio_instance.open(
+            format=pyaudio.paInt16,
+            channels=1,
+            rate=16000,
+            input=True,
+            frames_per_buffer = 1024
+        )
+    
+    def restart_audio_stream(self):
+        if self.stream.is_active():
+            self.stream.stop_stream()
+        self.stream.close()
+        self.pyaudio_instance.terminate()
+        self.setup_audio_stream()
 
-    def transcribe_streaming(self):
+    def callback(self, in_data, frame_count, time_info, status):
+        if not self.is_speaking:
+            # GPT가 대답하는 동안에는 입력 데이터를 처리하지 않음
+            # 필요한 데이터 처리 로직 추가
+            pass
+        return (None, pyaudio.paContinue)
+
+    def get_gpt_response(self, text): # 이전 질문과 답변 GPT 모델에 포함시키는 함수
+        messages = [{"role": "system", "content": "일상 대화"}]
+        for question, answer in self.history:
+            messages.append({"role": "user", "content": question})
+            messages.append({"role": "assistant", "content": answer})
+        messages.append({"role": "user", "content": text})
+
+        try:
+            response = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=messages
+            )
+            return response.choices[0].message["content"].strip()
+        except Exception as e:
+            return f"An error occurred: {str(e)}"
+
+    def text_to_speech(self, text):  #GPT로 부터 받은 응답 음성 변환 함수
+        self.is_speaking = True
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "C:\\Users\\wwsgb\\Json_key\\tts_json_key\\buoyant-mason-412215-1df2f278305e.json"
+        tts_client = texttospeech.TextToSpeechClient()
+        synthesis_input = texttospeech.SynthesisInput(text=text)
+        voice = texttospeech.VoiceSelectionParams(
+            language_code="ko-KR",
+            ssml_gender=texttospeech.SsmlVoiceGender.NEUTRAL
+        )
+        audio_config = texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3)
+
+        response = tts_client.synthesize_speech(input=synthesis_input, voice=voice, audio_config=audio_config)
+        audio = io.BytesIO(response.audio_content)
+        song = AudioSegment.from_mp3(audio)
+        play(song)
+        time.sleep(0.3)
+        self.is_speaking = False
+        if self.interrupt:     #잠시만 키워드 감지된 경우 중단 요청 처리
+            self.interrupt = False
+            print("중단 요청, 새로운 입력 대기 중")
+            return
+        self.restart_audio_stream()
+        
+
+    def transcribe_streaming(self):   #실시간 사용자 음성 텍스트로 변환하는 함수
         config = speech.RecognitionConfig(
             encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
             sample_rate_hertz=16000,
@@ -81,25 +109,14 @@ class Transcriber:
             )
         )
 
-        streaming_config = speech.StreamingRecognitionConfig(
-            config=config,
-            interim_results=True,
-        )
+        streaming_config = speech.StreamingRecognitionConfig(config=config, interim_results=True)
 
         p = pyaudio.PyAudio()
-        stream = p.open(
-            format=pyaudio.paInt16,
-            channels=1,
-            rate=16000,
-            input=True,
-            frames_per_buffer=1024,
-        )
+        stream = p.open(format=pyaudio.paInt16, channels=1, rate=16000, input=True, frames_per_buffer=1024)
 
         def generate_requests():
-            while True:
+            while self.running:
                 data = stream.read(1024, exception_on_overflow=False)
-                if not data:
-                    break
                 yield speech.StreamingRecognizeRequest(audio_content=data)
 
         requests = generate_requests()
@@ -108,35 +125,50 @@ class Transcriber:
         for response in responses:
             if not response.results:
                 continue
+
             result = response.results[-1]
+
             if result.is_final:
-                self.transcript = result.alternatives[0].transcript
-                self.last_transcript_time = time.time()
-            else:
                 transcript = result.alternatives[0].transcript
+                
                 if "작동 그만해" in transcript:
                     self.running = False
                     print("프로그램 중단")
                     break
 
+                if "잠시만" in transcript and self.is_speaking:
+                    self.interrupt = True    # 중단 요청 감지
+                    self.is_speaking = False # 현재 응답 중단
+                    print("응답 중단 및 새 질문 대기")
+                    continue
+                
+                if not self.is_speaking or self.interrupt:
+                    self.transcript = transcript
+                    self.last_transcript_time = time.time()
+                    self.process_response()
+             
         stream.stop_stream()
         stream.close()
         p.terminate()
 
+    def process_response(self):
+        if self.interrupt:
+            self.interrupt = False
+            return 
+        
+        print("변환 텍스트: {}".format(self.transcript))
+        gpt_response = self.get_gpt_response(self.transcript)
+        print("GPT 응답: {}".format(gpt_response))
+        self.history.append((self.transcript, gpt_response))  # 대화 이력에 추가
+        self.text_to_speech(gpt_response)
+
     def monitor_silence(self):
-        # 변환된 텍스트가 있을 때 TTS를 통해 응답
         while self.running:
             if time.time() - self.last_transcript_time > self.silence_threshold:
-                if self.transcript:
-                    print("변환 텍스트: {}".format(self.transcript))
-                    gpt_response = get_gpt_response(self.transcript)
-                    print("GPT 응답: {}".format(gpt_response))
-                    text_to_speech(gpt_response)  # 응답을 TTS로 변환하여 출력
-
-                    self.transcript = ""
+                if not self.is_speaking:
+                    self.history.clear()  # 5분 이상 대화 없을 경우 입력 초기화
                     self.last_transcript_time = time.time()
-
-                time.sleep(0.3)
+            time.sleep(0.3)
 
 transcriber = Transcriber()
 transcription_thread = threading.Thread(target=transcriber.transcribe_streaming)
