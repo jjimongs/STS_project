@@ -27,7 +27,7 @@ class Transcriber:
         self.last_transcript_time = time.time()
         self.history = []                # 대화 이력 저장
         self.silence_threshold = 5 * 60  # 5분간 대화 없을 시 리셋
-        self.running = True
+        self.running = True              # 인스턴스 변수, 스레드 실행여부 판단 (True = transcribe_streaming & monitor_silence 실행)
         self.is_speaking = False         # GPT 말하고 있는지에 대한 여부
         self.stream_use = False          # 오디오 스트림 사용 중인지 나타내는 플래그
         self.setup_audio_stream()
