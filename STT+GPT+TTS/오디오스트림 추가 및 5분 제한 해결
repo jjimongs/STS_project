@@ -52,35 +52,40 @@ class Transcriber:
         self.pyaudio_instance.terminate()
         print("오디오 스트림 중지")
 
-    def transcribe_streaming(self):
-        while self.running:
+    def transcribe_streaming(self):   # 실시간 사용자 음성 텍스트로 변환하는 함수
+        while self.running: 
             config = speech.RecognitionConfig(
                 encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
                 sample_rate_hertz=16000,
                 language_code="ko-KR",
-                speech_contexts=[{"phrases": ["작동", "그만해", "안녕", "있잖아", "할 말이 있어", "도와줘", "살려줘", "도와줄래", "나 좀 도와줘"]}],  # 커스텀 어휘 리스트 추가
-                enable_separate_recognition_per_channel=True  # 멀티채널 인식 활성화
+                metadata=speech.RecognitionMetadata(
+                    interaction_type=speech.RecognitionMetadata.InteractionType.VOICE_SEARCH, 
+                    microphone_distance=speech.RecognitionMetadata.MicrophoneDistance.NEARFIELD,
+                    original_media_type=speech.RecognitionMetadata.OriginalMediaType.AUDIO,
+                    recording_device_type=speech.RecognitionMetadata.RecordingDeviceType.SMARTPHONE,
+                )
             )
 
+            #interim_results=True => 중간 결과도 반환하겠다.
             streaming_config = speech.StreamingRecognitionConfig(config=config, interim_results=True)
 
             p = pyaudio.PyAudio()
             stream = p.open(format=pyaudio.paInt16, channels=1, rate=16000, input=True, frames_per_buffer=1024)
 
-            def generate_requests():
+            def generate_requests():  #오디오 스트림에서 읽은 데이터를 StreamingRecognizeRequest 객체에 담아 STT API에 반환
                 start_time = time.time()  # 스트림 시작 시간 기록
                 while self.running and time.time() - start_time < 300:  # 5분 이하로만 실행
                     data = stream.read(1024, exception_on_overflow=False)
                     yield speech.StreamingRecognizeRequest(audio_content=data)
 
             requests = generate_requests()
-            responses = self.client.streaming_recognize(streaming_config, requests)
+            responses = self.client.streaming_recognize(streaming_config, requests) #STT로 전송해 음성인식 수행 (streaming_recognize 메소드로부터 반환된 스트리밍 응답 객체)
 
             for response in responses:
                 if not response.results:
                     continue
 
-                result = response.results[-1]
+                result = response.results[-1] #가장 최근 결과 가져옴
 
                 if result.is_final:
                     transcript = result.alternatives[0].transcript
@@ -90,19 +95,19 @@ class Transcriber:
                         print("프로그램 중단")
                         break
                     
-                    if not self.is_speaking:
+                    if not self.is_speaking: #GPT가 말하고 있지 않으면 인식된 텍스트 처리
                         self.transcript = transcript
-                        self.last_transcript_time = time.time()
+                        self.last_transcript_time = time.time()  #마지막 시간 현재로 업데이트
                         self.process_response()
                 
             stream.stop_stream()
             stream.close()
             p.terminate()
-            
+
             # 스트림이 종료된 후 자동으로 새 스트림 시작
             if self.running:
                 print("5분동안 음성이 들어오지 않았기에 새 스트림을 시작합니다")
-                time.sleep(0.25)  # 잠시 대기 후 새 스트림 시작
+                time.sleep(0.2)  # 잠시 대기 후 새 스트림 시작
 
 
     def process_response(self):
