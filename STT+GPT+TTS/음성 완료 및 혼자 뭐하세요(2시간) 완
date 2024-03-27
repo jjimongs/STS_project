@@ -23,7 +23,7 @@ class Transcriber:
         # STT API 인증 정보 설정
         os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "C:\\Users\\wwsgb\\Json_key\\stt_json_key\\buoyant-mason-412215-845850c6db6c.json"
         self.client = speech.SpeechClient()       
-        self.transcript = ""                            # 녹취
+        self.transcript = ""                            # 인식된 음성 텍스트로 저장
         self.last_transcript_time = time.time()         # 녹취 마지막 시간
         self.alone_last_transcript_time = time.time()   # 혼자 뭐하세요를 위한 마지막 녹취 시간
         self.history = []                               # 대화 이력 저장
