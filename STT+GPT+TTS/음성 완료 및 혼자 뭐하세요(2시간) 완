@@ -176,7 +176,6 @@ class Transcriber:
             time.sleep(0.25)
 
     def alone_speaking(self):
-        print(f"Checking inactivity... Last activity was {time.time() - self.alone_last_transcript_time} seconds ago.")  # 로깅 추가
         if time.time() - self.alone_last_transcript_time > self.alone and not self.is_speaking:
             print("혼자 뭐하세요?")  # 이 메시지가 출력되지 않는다면, 조건문이 False로 평가되고 있음
             self.alone_text_to_speech("혼자 뭐하세요?")
