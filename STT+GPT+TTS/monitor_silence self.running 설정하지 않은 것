@@ -230,12 +230,13 @@ class Transcriber:
             while self.is_speaking:
                 time.sleep(0.1)
 
-transcriber = Transcriber()
-transcription_thread = threading.Thread(target=transcriber.transcribe_streaming)
-monitor_thread = threading.Thread(target=transcriber.monitor_silence)
+    def run(self):
+        transcriber = Transcriber()
+        transcription_thread = threading.Thread(target=transcriber.transcribe_streaming)
+        monitor_thread = threading.Thread(target=transcriber.monitor_silence)
 
-transcription_thread.start()
-monitor_thread.start()
+        transcription_thread.start()
+        monitor_thread.start()
 
-transcription_thread.join()
-monitor_thread.join()
+        transcription_thread.join()
+        monitor_thread.join()
