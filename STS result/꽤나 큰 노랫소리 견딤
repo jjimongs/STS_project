@@ -29,11 +29,11 @@ class Transcriber:
         self.fm_last_transcript_time = time.time()      # 5분 이상 대화 없을 시 메모리 삭제를 위한 마지막 대화 시간
         self.history = []                               # 대화 이력 저장
         self.silence_threshold = 10                     # 10초간 대화 없을 시 오디오 스트림 중지
-        self.fiveminutes = 1*60                         # 5분간 대화 없으면 리셋
+        self.fiveminutes = 5*60                         # 5분간 대화 없으면 리셋
         self.running = True                             # 인스턴스 변수, 스레드 실행여부 판단 (True = transcribe_streaming & monitor_silence 실행)
         self.is_speaking = False                        # GPT 말하고 있는지에 대한 여부
         self.stream_use = False                         # 오디오 스트림 사용 중인지 나타내는 플래그
-        self.alone = 0.5*60                             # 혼자 2시간 동안 말이 없으면 혼자 뭐하세요 기능을 위한 시간 설정
+        self.alone = 120*60                             # 혼자 2시간 동안 말이 없으면 혼자 뭐하세요 기능을 위한 시간 설정
         self.setup_audio_stream()
     
     def setup_audio_stream(self):   #pyaudio 활용해 새로운 오디오 입력 스트림 설정
