@@ -2,8 +2,8 @@ import os
 import io
 import time
 import openai
-import pyaudio
 import threading
+import pyaudio
 import configparser
 from pydub import AudioSegment
 from pydub.playback import play
@@ -31,7 +31,8 @@ class Transcriber:
         self.running = True                             # 인스턴스 변수, 스레드 실행여부 판단 (True = transcribe_streaming & monitor_silence 실행)
         self.is_speaking = False                        # GPT 말하고 있는지에 대한 여부
         self.stream_use = False                         # 오디오 스트림 사용 중인지 나타내는 플래그
-        self.alone =120*60                             # 혼자 2시간 동안 말이 없으면 혼자 뭐하세요 기능을 위한 시간 설정
+        self.alone = 120*60                             # 혼자 2시간 동안 말이 없으면 혼자 뭐하세요 기능을 위한 시간 설정
+        self.response_timer = None
         self.setup_audio_stream()
     
     def setup_audio_stream(self):   #pyaudio 활용해 새로운 오디오 입력 스트림 설정
@@ -60,11 +61,11 @@ class Transcriber:
     def transcribe_streaming(self):   # 실시간 사용자 음성 텍스트로 변환하는 함수
         print("음성 인식을 시작합니다. (텍스트로 변환 중)")
         while self.running:
-            if not self.stream_use or self.is_speaking:  # 스트림 사용 중이지 않거나 GPT가 말하고 있는 경우 재설정을 기다림
+            if not self.stream_use or self.is_speaking:
                 print("재설정을 기다립니다.")
                 time.sleep(0.1)
-                continue
-            if self.stream_use and not self.is_speaking: 
+                return
+            if self.stream_use and not self.is_speaking:
                 config = speech.RecognitionConfig(
                     encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
                     sample_rate_hertz=16000,
@@ -106,9 +107,14 @@ class Transcriber:
                             print("프로그램 중단")
                             break
                         
-                        self.transcript = transcript
-                        self.last_transcript_time = time.time()  #마지막 시간 현재로 업데이트
-                        self.process_response()
+                        if "혼자 뭐하세요" not in transcript and "뭐 하세요" not in transcript:
+                            self.transcript = transcript
+                            self.last_transcript_time = time.time()
+                            self.alone_last_transcript_time = time.time()  # alone_last_transcript_time 업데이트
+                            print(f"transcribe_streaming: alone_last_transcript_time: {self.alone_last_transcript_time}, current_time: {time.time()}")
+                            self.process_response()
+                        else:
+                            print("무시된 음성 입력:", transcript)
                     
                 stream.stop_stream()
                 stream.close()
@@ -121,8 +127,22 @@ class Transcriber:
         gpt_response = self.get_gpt_response(self.transcript)
         print("GPT 응답: {}".format(gpt_response))
         self.history.append((self.transcript, gpt_response))  # 대화 이력에 추가(저장소)
+        self.is_speaking = True
         self.text_to_speech(gpt_response)
+        self.is_speaking = False
+        self.start_response_timer()
+        self.alone_last_transcript_time = time.time()  # GPT 응답 이후에 alone_last_transcript_time 업데이트
+        print(f"응답 이후 alone_last_transcript_time 업데이트: {self.alone_last_transcript_time}")
 
+    def start_response_timer(self):
+        if self.response_timer is not None:
+            self.response_timer.cancel()
+        self.response_timer = threading.Timer(self.alone, self.check_alone)
+        self.response_timer.start()
+
+    def check_alone(self):
+        if not self.is_speaking and time.time() - self.alone_last_transcript_time > 10:
+            self.alone_speaking()
 
     def text_to_speech(self, text):  # GPT로부터 받은 응답 음성 변환 함수, 마이크 제어 로직 포함
         self.is_speaking = True
@@ -167,26 +187,26 @@ class Transcriber:
 
     def monitor_silence(self):
         while self.running:
-            self.alone_speaking()
-            if time.time() - self.last_transcript_time > self.silence_threshold:
-                if not self.is_speaking:
-                    print("5분 이상 대화 없어 메모리 초기화합니다.")
-                    self.history.clear()
-                    self.last_transcript_time = time.time()
+            current_time = time.time()
+            if current_time - self.last_transcript_time > self.silence_threshold:  # 5분 동안 대화 없으면
+                print("5분 이상 대화 없어 메모리 초기화합니다.")
+                self.history.clear()
+                self.last_transcript_time = current_time
+                self.alone_last_transcript_time = current_time  # 5분 동안 대화 없으면 alone_last_transcript_time도 업데이트
+            # print(f"monitor_silence: 혼자 시간: {self.alone_last_transcript_time}, 현재 시간: {current_time}")
+            if not self.is_speaking and current_time - self.alone_last_transcript_time > self.alone:
+                self.alone_speaking()
             time.sleep(0.25)
 
     def alone_speaking(self):
-        if time.time() - self.alone_last_transcript_time > self.alone and not self.is_speaking:
-            print("혼자 뭐하세요?")  # 이 메시지가 출력되지 않는다면, 조건문이 False로 평가되고 있음
+        if not self.is_speaking:
+            print("혼자 뭐하세요?")
             self.alone_text_to_speech("혼자 뭐하세요?")
             self.alone_last_transcript_time = time.time()
 
-    def alone_text_to_speech(self, text):  
-        self.is_speaking = True      # 음성 출력을 시작함을 나타내어 마이크 입력 중지
-        print("혼자 뭐하세요 이전에 마이크 입력을 중지합니다.")
-        self.restart_audio_stream()  # 마이크 입력을 중지
-        self.running = False
-        # 텍스트를 음성으로 변환하여 재생하는 메서드
+    def alone_text_to_speech(self, text):
+        self.is_speaking = True
+        self.restart_audio_stream()
         os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "C:\\Users\\wwsgb\\Json_key\\tts_json_key\\buoyant-mason-412215-1df2f278305e.json"
         tts_client = texttospeech.TextToSpeechClient()
         synthesis_input = texttospeech.SynthesisInput(text=text)
@@ -199,19 +219,21 @@ class Transcriber:
         audio = io.BytesIO(response.audio_content)
         song = AudioSegment.from_mp3(audio)
         play(song)
-
-        time.sleep(0.5)  # 재생이 완전히 끝난 후에 스트림을 재시작하기 위해 잠시 대기
-        self.running = True
+        time.sleep(0.5)
         self.setup_audio_stream()
-        print("혼자 뭐하세요 이 후 마이크는 다시 출력됩니다.")
-        self.is_speaking = False  # 마이크 입력을 다시 시작함을 나타냄
+        self.is_speaking = False
+        self.alone_last_transcript_time = time.time() 
 
-transcriber = Transcriber()
-transcription_thread = threading.Thread(target=transcriber.transcribe_streaming)
-monitor_thread = threading.Thread(target=transcriber.monitor_silence)
+def main():
+    transcriber = Transcriber()
+    transcription_thread = threading.Thread(target=transcriber.transcribe_streaming)
+    monitor_thread = threading.Thread(target=transcriber.monitor_silence)
 
-transcription_thread.start()
-monitor_thread.start()
+    transcription_thread.start()
+    monitor_thread.start()
 
-transcription_thread.join()
-monitor_thread.join()
+    transcription_thread.join()
+    monitor_thread.join()
+
+if __name__ == "__main__":
+    main()
