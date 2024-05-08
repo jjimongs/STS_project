@@ -196,7 +196,7 @@ class GPTResponse:
         self.alone = 120 * 60                           # 혼자 2시간 동안 말이 없으면 혼자 뭐하세요 기능을 위한 시간 설정
         self.response_timer = None
         self.silence_timer = None
-        self.de = DetectEmotion('light_emotion_model', 'label_encoder.pkl')
+        self.de = DetectEmotion('C:\\Users\\wwsgb\\OneDrive\\emotion\\light_emotion_model', 'C:\\Users\\wwsgb\\OneDrive\\emotion\\label_encoder.pkl')
 
     def get_gpt_response(self, text):
         messages = [{"role": "system", "content": "일상 대화"}]
