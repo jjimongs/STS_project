@@ -197,15 +197,19 @@ class SpeechToText:
                     if result.is_final:
                         transcript = result.alternatives[0].transcript
                         
+                        is_processed = self.process_command(self.transcript)
                         
+                        if is_processed:
+                            # process_command에서 처리된 경우 반환
+                            return
                         
-
-                        if "곰돌아" in transcript or "공돌아" in transcript or "곤도라" in transcript or "곰도라" in transcript or "곰돌 아" in transcript: 
+                        elif "곰돌아" in transcript or "공돌아" in transcript or "곤도라" in transcript or "곰도라" in transcript or "곰돌 아" in transcript: 
                             self.come_transcript = transcript
                             print("들어온 질문: {}".format(self.come_transcript))
                             clean_transcript = transcript.replace("곰돌아", "").replace("공돌아", "").replace("곤도라", "").replace("곰도라", "").replace("곰돌 아", "").strip()
                             self.transcript = clean_transcript
                             return self.transcript
+                        
                         else:
                             print("무시된 음성 입력:", transcript)
                     
