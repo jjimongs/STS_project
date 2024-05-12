@@ -14,10 +14,12 @@ from google.cloud import speech_v1 as speech
 # ffmpeg와 ffprobe 경로 직접 설정 (환경변수에 추가했는데 잘 되지 않아 직접 설정)
 os.environ["PATH"] += os.pathsep + "C:\\Users\\user\\ffmpeg-6.1.1-full_build\\bin"
 
-# 설정파일 로드
 config = configparser.ConfigParser()
-config.read('config.ini')
-openai.api_key = config.get('api_key', 'openai_key')
+config.read(r'C:\Users\user\Json_key\config.ini')  # 파일의 전체 경로를 지정하세요.
+
+    print(openai_api_key)
+else:
+    print("섹션이 설정 파일에 존재하지 않습니다.")
 
 # 오디오 스트림 설정, 주변 소음 측정, STT 기능 클래스
 class SpeechToText:
