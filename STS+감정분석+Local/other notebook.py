@@ -12,7 +12,6 @@ from Local import Local
 from konlpy.tag import Komoran
 from pydub import AudioSegment
 from pydub.playback import play
-from memory_profiler import profile
 from google.cloud import texttospeech
 from google.cloud import speech_v1 as speech
 
@@ -20,7 +19,7 @@ os.environ["PATH"] += os.pathsep + "C:\\Users\\user\\ffmpeg-6.1.1-full_build\\bi
 
 config = configparser.ConfigParser()
 config.read('config.ini')
-openai.api_key = config.get('api_key', 'openai_key')
+openai_api_key = config.get('openai', 'api_key')
 
 class DetectEmotion:
     def __init__(self, model_path, label_encoder_path):
@@ -39,14 +38,14 @@ class DetectEmotion:
 class SpeechToText:
     def __init__(self):
         os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "C:\\Users\\user\\Json_key\\STT_key\\sigma-kayak-421806-2be227c3a876.json"
-        self.client = speech.SpeechClient()       
+        self.client = speech.SpeechClient()
         self.transcript = ""
         self.prompt = ""
         self.come_transcript = ""
         self.stream_use = False
         self.noise_level = 0
         self.setup_audio_stream()
-    
+
     def setup_audio_stream(self):
         start_time = time.time()
         if not self.stream_use:
@@ -61,7 +60,7 @@ class SpeechToText:
         end_time = time.time()
         self.stream_use = True
         print(f"오디오 스트림 설정 완료 시간: {end_time - start_time} 초")
-    
+
     def restart_audio_stream(self):
         if self.stream.is_active():
             self.stream.stop_stream()
@@ -89,7 +88,7 @@ class SpeechToText:
         else:
             speech_contexts = [speech.SpeechContext(phrases=["주변이 시끄럽습니다."])]
         return speech_contexts
-    
+
     def process_command(transcript):
         local = Local()
         pos_result = Komoran.pos(transcript)
@@ -102,7 +101,7 @@ class SpeechToText:
 
         for i, (word, pos) in enumerate(pos_result):
             if i == last_verb_index:
-                if word == '살리':     
+                if word == '살리':
                     print('살려줘(긴급) 관련 동작')
                     break
                 elif word == '맞추':
@@ -134,7 +133,7 @@ class SpeechToText:
                 print('아파(긴급) 관련 동작')
             elif '이상' in nouns :
                 print('이상해(긴급) 관련 동작')
-        
+
             elif '날씨' in nouns:
                 if '내일' in nouns:
                     print('내일 날씨 출력')
@@ -146,7 +145,7 @@ class SpeechToText:
                     print('오늘 날씨 출력')
                     local.fetchWeatherData()
                     local.printTodayWeather()
-                
+
     def transcribe_streaming(self):
        while True:
             print("음성 인식을 시작합니다. (텍스트로 변환 중)")
@@ -163,13 +162,13 @@ class SpeechToText:
                     self.stream.input_volume_float = 0.7
                 else:
                     self.stream.input_volume_float = 0.4
-        
+
                 config = speech.RecognitionConfig(
                     encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
                     sample_rate_hertz=16000,
                     language_code="ko-KR",
                     metadata=speech.RecognitionMetadata(
-                        interaction_type=speech.RecognitionMetadata.InteractionType.VOICE_SEARCH, 
+                        interaction_type=speech.RecognitionMetadata.InteractionType.VOICE_SEARCH,
                         microphone_distance=speech.RecognitionMetadata.MicrophoneDistance.NEARFIELD,
                         original_media_type=speech.RecognitionMetadata.OriginalMediaType.AUDIO,
                         recording_device_type=speech.RecognitionMetadata.RecordingDeviceType.SMARTPHONE,
@@ -196,23 +195,23 @@ class SpeechToText:
 
                     if result.is_final:
                         transcript = result.alternatives[0].transcript
-                        
+
                         is_processed = self.process_command(self.transcript)
-                        
+
                         if is_processed:
                             # process_command에서 처리된 경우 반환
                             return
-                        
-                        elif "곰돌아" in transcript or "공돌아" in transcript or "곤도라" in transcript or "곰도라" in transcript or "곰돌 아" in transcript: 
+
+                        elif "곰돌아" in transcript or "공돌아" in transcript or "곤도라" in transcript or "곰도라" in transcript or "곰돌 아" in transcript:
                             self.come_transcript = transcript
                             print("들어온 질문: {}".format(self.come_transcript))
                             clean_transcript = transcript.replace("곰돌아", "").replace("공돌아", "").replace("곤도라", "").replace("곰도라", "").replace("곰돌 아", "").strip()
                             self.transcript = clean_transcript
                             return self.transcript
-                        
+
                         else:
                             print("무시된 음성 입력:", transcript)
-                    
+
                 self.stream.stop_stream()
                 self.stream.close()
                 self.pyaudio_instance.terminate()
@@ -260,9 +259,9 @@ class GPTResponse:
             return response.choices[0].message["content"].strip()
         except Exception as e:
             return f"An error occurred: {str(e)}"
-        
-    
-          
+
+
+
     def emotion_detection(self, transcript):
         emotions = self.de.predict([transcript])
         return emotions[0]
@@ -270,7 +269,7 @@ class GPTResponse:
     def process_response(self, transcript):
         emotion = self.emotion_detection(transcript)
         print(f"감지된 감정: {emotion}")
-        
+
         if 'angry' in emotion or '분노' in emotion:
             prompt = f"사용자가 화났습니다. 사용자의 질문: {transcript}\n 에 대한 사용자의 마음을 진정시키고 합리적인 답변을 해주세요."
         elif 'disgust' in emotion:
@@ -283,12 +282,12 @@ class GPTResponse:
             prompt = f"사용자의 질문: {transcript}\n이에 대한  명확하고 객관적인 답변을 해주세요."
         elif 'sadness' in emotion or '슬픔' in emotion or '상처' in emotion:
             prompt = f"사용자가 상처받고, 슬퍼하고 있습니다. 사용자의 질문: {transcript}\n이에 대한 위로의 답변을 해주세요."
-        elif 'surprise' in emotion or '당황' in emotion: 
+        elif 'surprise' in emotion or '당황' in emotion:
             prompt = f"사용자가 당황하고 있습니다. 사용자의 질문: {transcript}\n이에 대한 안정감을 주고 상황을 명확히 해주는 답변을 해주세요."
         else:
             prompt = f"사용자의 질문: {transcript}\n 이에 대한 답변을 해주세요."
         print(f"프롬프트: {prompt} ")
-        
+
         gpt_response = self.get_gpt_response(prompt)
         print("GPT 응답: {}".format(gpt_response))
         self.history.append((transcript, gpt_response))
@@ -296,7 +295,7 @@ class GPTResponse:
         self.alone_last_transcript_time = time.time()
         return gpt_response
 
-                        
+
     def start_response_timer(self):
         if self.response_timer is not None:
             self.response_timer.cancel()
@@ -319,7 +318,7 @@ class GPTResponse:
     def check_alone(self):
         if time.time() - self.alone_last_transcript_time > self.alone:
             print(" 혼자 뭐하세요?")
-            self.alone_last_transcript_time = time.time() 
+            self.alone_last_transcript_time = time.time()
             self.start_response_timer()
 
 class TextToSpeech:
