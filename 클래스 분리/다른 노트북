@@ -16,7 +16,8 @@ os.environ["PATH"] += os.pathsep + "C:\\Users\\user\\ffmpeg-6.1.1-full_build\\bi
 
 config = configparser.ConfigParser()
 config.read(r'C:\Users\user\Json_key\config.ini')  # 파일의 전체 경로를 지정하세요.
-
+if 'openai' in config:
+    openai_api_key = config.get('openai', 'api_key')
     print(openai_api_key)
 else:
     print("섹션이 설정 파일에 존재하지 않습니다.")
