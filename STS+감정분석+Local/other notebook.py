@@ -1,0 +1,366 @@
+import os
+import io
+import time
+import pickle
+import openai
+import threading
+import pyaudio
+import numpy as np
+import configparser
+import tensorflow as tf
+from Local import Local
+from konlpy.tag import Komoran
+from pydub import AudioSegment
+from pydub.playback import play
+from memory_profiler import profile
+from google.cloud import texttospeech
+from google.cloud import speech_v1 as speech
+
+os.environ["PATH"] += os.pathsep + "C:\\Users\\user\\ffmpeg-6.1.1-full_build\\bin"
+
+config = configparser.ConfigParser()
+config.read('config.ini')
+openai.api_key = config.get('api_key', 'openai_key')
+
+class DetectEmotion:
+    def __init__(self, model_path, label_encoder_path):
+        self.model = tf.keras.models.load_model(model_path)
+        with open(label_encoder_path, 'rb') as file:
+            self.label_encoder = pickle.load(file)
+        tf.keras.backend.set_floatx('float16')
+
+    def predict(self, texts):
+        vectorized_texts = self.model.layers[0](texts)
+        predictions = self.model.predict(vectorized_texts, batch_size=1)
+        predicted_classes = np.argmax(predictions, axis=1)
+        predicted_emotions = self.label_encoder.inverse_transform(predicted_classes)
+        return predicted_emotions
+
+class SpeechToText:
+    def __init__(self):
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "C:\\Users\\user\\Json_key\\STT_key\\sigma-kayak-421806-2be227c3a876.json"
+        self.client = speech.SpeechClient()       
+        self.transcript = ""
+        self.prompt = ""
+        self.come_transcript = ""
+        self.stream_use = False
+        self.noise_level = 0
+        self.setup_audio_stream()
+    
+    def setup_audio_stream(self):
+        start_time = time.time()
+        if not self.stream_use:
+            self.pyaudio_instance = pyaudio.PyAudio()
+            self.stream = self.pyaudio_instance.open(
+                format=pyaudio.paInt16,
+                channels=1,
+                rate=16000,
+                input=True,
+                frames_per_buffer=1024
+            )
+        end_time = time.time()
+        self.stream_use = True
+        print(f"오디오 스트림 설정 완료 시간: {end_time - start_time} 초")
+    
+    def restart_audio_stream(self):
+        if self.stream.is_active():
+            self.stream.stop_stream()
+        self.stream.close()
+        self.pyaudio_instance.terminate()
+        self.stream_use = False
+        print("오디오 스트림 중지")
+
+    def measure_ambient_noise(self, duration=1.0):
+        if self.stream.is_active():
+            frames = []
+            for _ in range(int(self.stream._rate / self.stream._frames_per_buffer * duration)):
+                data = self.stream.read(self.stream._frames_per_buffer)
+                frames.append(np.frombuffer(data, dtype=np.int16))
+            frame = np.concatenate(frames)
+            return np.max(np.abs(frame)) / 32767
+        else:
+            return 0
+
+    def adjust_recognition_sensitivity(self, noise_level):
+        if noise_level < 0.1:
+            speech_contexts = [speech.SpeechContext(phrases=["주변이 조용합니다."])]
+        elif noise_level < 0.3:
+            speech_contexts = [speech.SpeechContext(phrases=["주변이 약간 시끄럽습니다."])]
+        else:
+            speech_contexts = [speech.SpeechContext(phrases=["주변이 시끄럽습니다."])]
+        return speech_contexts
+    
+    def process_command(transcript):
+        local = Local()
+        pos_result = Komoran.pos(transcript)
+
+        nouns = [word for word, pos in pos_result if pos in ('NNG', 'NNP')] # 명사만 모아놓은 리스트
+        verbs = [word for word, pos in pos_result if pos in ('VV', 'VA')]   # 동사만 모아놓은 리스트
+
+        verb_indices = [i for i, (word, pos) in enumerate(pos_result) if pos == 'VV' and word not in ['있']] #동사만 모아놓은 리스트에서 쓸모없는 동작 제거하는 부분
+        last_verb_index = verb_indices[-1] if verb_indices else -1  #쓸데없는 동사 뺀 후 나머지 동사 모아놓은 리스트
+
+        for i, (word, pos) in enumerate(pos_result):
+            if i == last_verb_index:
+                if word == '살리':     
+                    print('살려줘(긴급) 관련 동작')
+                    break
+                elif word == '맞추':
+                    if '일정' in nouns:
+                        print('일정 맞춤 관련동작 실행')
+                    elif '알람' in nouns:
+                        print('알람 맞춤 관련동작 실행')
+                    break
+                elif word == '알리':
+                    if '일정' in nouns:
+                        print('일정 알림 관련동작 실행')
+                    elif '알람' in nouns:
+                        print('알람 알림 관련동작 실행')
+                    elif '날씨' in nouns:
+                        if '오늘' in nouns:
+                            print('오늘 날씨 출력')
+                            local.fetchWeatherData()
+                            local.printTodayWeather()
+                        elif '내일' in nouns:
+                            print('내일 날씨 출력')
+                        else:
+                            print('오늘 날씨 출력')
+                            local.fetchWeatherData()
+                            local.printTodayWeather()
+                    break
+
+        else:
+            if '아프' in verbs :
+                print('아파(긴급) 관련 동작')
+            elif '이상' in nouns :
+                print('이상해(긴급) 관련 동작')
+        
+            elif '날씨' in nouns:
+                if '내일' in nouns:
+                    print('내일 날씨 출력')
+                elif '오늘' in nouns:
+                    print('오늘 날씨 출력')
+                    local.fetchWeatherData()
+                    local.printTodayWeather()
+                else:
+                    print('오늘 날씨 출력')
+                    local.fetchWeatherData()
+                    local.printTodayWeather()
+                
+    def transcribe_streaming(self):
+       while True:
+            print("음성 인식을 시작합니다. (텍스트로 변환 중)")
+            if not self.stream_use:
+                self.setup_audio_stream()
+
+            if self.stream is not None and self.stream.is_active():
+                noise_level = self.measure_ambient_noise()
+                speech_contexts = self.adjust_recognition_sensitivity(noise_level)
+
+                if noise_level < 0.1:
+                    self.stream.input_volume_float = 1.0
+                elif noise_level < 0.3:
+                    self.stream.input_volume_float = 0.7
+                else:
+                    self.stream.input_volume_float = 0.4
+        
+                config = speech.RecognitionConfig(
+                    encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
+                    sample_rate_hertz=16000,
+                    language_code="ko-KR",
+                    metadata=speech.RecognitionMetadata(
+                        interaction_type=speech.RecognitionMetadata.InteractionType.VOICE_SEARCH, 
+                        microphone_distance=speech.RecognitionMetadata.MicrophoneDistance.NEARFIELD,
+                        original_media_type=speech.RecognitionMetadata.OriginalMediaType.AUDIO,
+                        recording_device_type=speech.RecognitionMetadata.RecordingDeviceType.SMARTPHONE,
+                    ),
+                    speech_contexts=speech_contexts
+                )
+
+                streaming_config = speech.StreamingRecognitionConfig(config=config, interim_results=True)
+
+                def generate_requests():
+                    start_time = time.time()
+                    while time.time() - start_time < 300:
+                        data = self.stream.read(1024, exception_on_overflow=False)
+                        yield speech.StreamingRecognizeRequest(audio_content=data)
+
+                requests = generate_requests()
+                responses = self.client.streaming_recognize(streaming_config, requests)
+
+                for response in responses:
+                    if not response.results:
+                        continue
+
+                    result = response.results[-1]
+
+                    if result.is_final:
+                        transcript = result.alternatives[0].transcript
+                        
+                        is_processed = self.process_command(self.transcript)
+                        
+                        if is_processed:
+                            # process_command에서 처리된 경우 반환
+                            return
+                        
+                        elif "곰돌아" in transcript or "공돌아" in transcript or "곤도라" in transcript or "곰도라" in transcript or "곰돌 아" in transcript: 
+                            self.come_transcript = transcript
+                            print("들어온 질문: {}".format(self.come_transcript))
+                            clean_transcript = transcript.replace("곰돌아", "").replace("공돌아", "").replace("곤도라", "").replace("곰도라", "").replace("곰돌 아", "").strip()
+                            self.transcript = clean_transcript
+                            return self.transcript
+                        
+                        else:
+                            print("무시된 음성 입력:", transcript)
+                    
+                self.stream.stop_stream()
+                self.stream.close()
+                self.pyaudio_instance.terminate()
+                time.sleep(0.15)
+
+            if not self.stream.is_active():
+                print("음성 인식이 중단되었습니다.")
+                time.sleep(0.25)
+
+            else:
+                if self.stream is not None:
+                    self.restart_audio_stream()
+                print("음성 인식이 중단되었습니다.")
+                time.sleep(0.25)
+
+class GPTResponse:
+    def __init__(self):
+        self.history = []
+        self.local = Local()
+        self.komoran = Komoran(userdic='./word.txt')
+        self.last_transcript_time = time.time()
+        self.alone_last_transcript_time = time.time()
+        self.silence_threshold = 5 * 60
+        self.alone = 120 * 60
+        self.response_timer = None
+        self.silence_timer = None
+        self.de = DetectEmotion('C:\\Users\\wwsgb\\OneDrive\\emotion\\light_emotion_model', 'C:\\Users\\wwsgb\\OneDrive\\emotion\\label_encoder.pkl')
+
+    def get_gpt_response(self, text):
+        messages = [{"role": "system", "content": "일상 대화"}]
+        for question, answer in self.history:
+            messages.append({"role": "user", "content": question})
+            messages.append({"role": "assistant", "content": answer})
+        messages.append({"role": "user", "content": text})
+
+        try:
+            response = openai.ChatCompletion.create(
+                model="gpt-3.5-turbo",
+                messages=messages,
+                max_tokens=150,
+                n=1,
+                stop=None,
+                temperature=0.7,
+            )
+            return response.choices[0].message["content"].strip()
+        except Exception as e:
+            return f"An error occurred: {str(e)}"
+        
+    
+          
+    def emotion_detection(self, transcript):
+        emotions = self.de.predict([transcript])
+        return emotions[0]
+
+    def process_response(self, transcript):
+        emotion = self.emotion_detection(transcript)
+        print(f"감지된 감정: {emotion}")
+        
+        if 'angry' in emotion or '분노' in emotion:
+            prompt = f"사용자가 화났습니다. 사용자의 질문: {transcript}\n 에 대한 사용자의 마음을 진정시키고 합리적인 답변을 해주세요."
+        elif 'disgust' in emotion:
+            prompt = f"사용자가 역겨움을 느끼고 있습니다. 사용자의 질문: {transcript}\n이에 대한 이해하고 수용하는 태도로 답변을 해주세요."
+        elif 'fear' in emotion or '불안' in emotion:
+            prompt = f"사용자가 불안함 느끼고 있습니다. 사용자의 질문: {transcript}\n이에 대한 안정적이고 위로가 되는 답변을 해주세요."
+        elif 'happiness' in emotion or '기쁨' in emotion:
+            prompt = f"사용자가 기쁨을 느끼고 있습니다. 사용자의 질문: {transcript}\n이에 대한 밝고 긍정적인 답변을 해주세요."
+        elif 'neutral' in emotion or '무감정' in emotion:
+            prompt = f"사용자의 질문: {transcript}\n이에 대한  명확하고 객관적인 답변을 해주세요."
+        elif 'sadness' in emotion or '슬픔' in emotion or '상처' in emotion:
+            prompt = f"사용자가 상처받고, 슬퍼하고 있습니다. 사용자의 질문: {transcript}\n이에 대한 위로의 답변을 해주세요."
+        elif 'surprise' in emotion or '당황' in emotion: 
+            prompt = f"사용자가 당황하고 있습니다. 사용자의 질문: {transcript}\n이에 대한 안정감을 주고 상황을 명확히 해주는 답변을 해주세요."
+        else:
+            prompt = f"사용자의 질문: {transcript}\n 이에 대한 답변을 해주세요."
+        print(f"프롬프트: {prompt} ")
+        
+        gpt_response = self.get_gpt_response(prompt)
+        print("GPT 응답: {}".format(gpt_response))
+        self.history.append((transcript, gpt_response))
+        self.last_transcript_time = time.time()
+        self.alone_last_transcript_time = time.time()
+        return gpt_response
+
+                        
+    def start_response_timer(self):
+        if self.response_timer is not None:
+            self.response_timer.cancel()
+        self.response_timer = threading.Timer(self.alone, self.check_alone)
+        self.response_timer.start()
+
+    def start_silence_timer(self):
+        if self.silence_timer is not None:
+            self.silence_timer.cancel()
+        self.silence_timer = threading.Timer(self.silence_threshold, self.reset_memory)
+        self.silence_timer.start()
+
+    def reset_memory(self):
+        if time.time() - self.last_transcript_time > self.silence_threshold:
+            print(f"{self.silence_threshold}초 이상 대화 없어 메모리 초기화합니다.")
+            self.history.clear()
+            self.last_transcript_time = time.time()
+            self.alone_last_transcript_time = time.time()
+
+    def check_alone(self):
+        if time.time() - self.alone_last_transcript_time > self.alone:
+            print(" 혼자 뭐하세요?")
+            self.alone_last_transcript_time = time.time() 
+            self.start_response_timer()
+
+class TextToSpeech:
+    def __init__(self):
+        self.is_speaking = False
+
+    def text_to_speech(self, text):
+        self.is_speaking = True
+        stt = SpeechToText()
+        stt.restart_audio_stream()
+        while stt.stream_use:
+            time.sleep(0.1)
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "C:\\Users\\user\\Json_key\\TTS_key\\sigma-kayak-421806-c28bf22ca0f0.json"
+        tts_client = texttospeech.TextToSpeechClient()
+        synthesis_input = texttospeech.SynthesisInput(text=text)
+        voice = texttospeech.VoiceSelectionParams(
+            language_code="ko-KR",
+            ssml_gender=texttospeech.SsmlVoiceGender.NEUTRAL
+        )
+        audio_config = texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3)
+
+        response = tts_client.synthesize_speech(input=synthesis_input, voice=voice, audio_config=audio_config)
+        audio = io.BytesIO(response.audio_content)
+        song = AudioSegment.from_mp3(audio)
+        play(song)
+        time.sleep(0.2)
+        stt.setup_audio_stream()
+        self.is_speaking = False
+
+def main():
+    stt = SpeechToText()
+    gpt = GPTResponse()
+    tts = TextToSpeech()
+
+    while True:
+        transcript = stt.transcribe_streaming()
+        if transcript:
+            gpt_response = gpt.process_response(transcript)
+            gpt.start_silence_timer()
+            gpt.start_response_timer()
+            tts.text_to_speech(gpt_response)
+
+if __name__ == "__main__":
+    main()
