@@ -58,6 +58,7 @@ class SpeechToText:
         self.last_input_time = time.time() #마지막 입력 시간 초기화
         self.sleeping = False
         self.daily = False
+        self.choice = False
 
     def setup_audio_stream(self):
         start_time = time.time()
@@ -102,68 +103,74 @@ class SpeechToText:
             speech_contexts = [speech.SpeechContext(phrases=["주변이 시끄럽습니다."])]
         return speech_contexts
 
-    def process_emergency(self, word):          #응급 상황
+    def process_emergency(self, word):  # 응급 상황
         if word == '살리':
+            self.daily = True
+            self.choice = True
             print('살려줘(긴급) 관련 동작')
         elif '아프' in word:
+            self.daily = True
+            self.choice = True
             print('아파(긴급) 관련 동작')
         elif '이상' in word:
+            self.daily = True
+            self.choice = True
             print('이상해(긴급) 관련 동작')
 
-    def process_schedule(self, word, nouns):    # 스케줄(일정) 관련
+    def process_schedule(self, word, nouns):  # 스케줄(일정) 관련
         if word == '맞추':
             if '일정' in nouns:
+                self.daily = True
                 print('일정 맞춤 관련동작 실행')
         elif word == '알리':
             if '일정' in nouns:
+                self.daily = True
                 print('일정 알림 관련동작 실행')
 
-    def process_alarm(self, word, nouns):       # 알람 관련
+    def process_alarm(self, word, nouns):  # 알람 관련
         if word == '맞추':
             if '알람' in nouns:
                 self.daily = True
                 print('알람 맞춤 관련동작 실행')
-                print("데일리 플래그 true 변경됩니다.")
         elif word == '알리':
             if '알람' in nouns:
                 self.daily = True
                 print('알람 알림 관련동작 실행')
-                print("데일리 플래그 true 변경됩니다.")
 
-    def process_weather(self, word, nouns):     #날씨 관련
+    def process_weather(self, word, nouns):  # 날씨 관련
         if word == '알리':
             if '날씨' in nouns:
                 if '오늘' in nouns:
                     self.daily = True
+                    self.choice = True
                     print('오늘 날씨 출력')
-                    print("데일리 플래그 true 변경됩니다.")
                     self.local.fetchWeatherData()
                     self.local.printTodayWeather()
                 elif '내일' in nouns:
                     self.daily = True
+                    self.choice = True
                     print('내일 날씨 출력')
-                    print("데일리 플래그 true 변경됩니다.")
                 else:
                     self.daily = True
+                    self.choice = True
                     print('오늘 날씨 출력')
-                    print("데일리 플래그 true 변경됩니다.")
                     self.local.fetchWeatherData()
                     self.local.printTodayWeather()
         elif '날씨' in nouns:
             if '내일' in nouns:
                 self.daily = True
+                self.choice = True
                 print('내일 날씨 출력')
-                print("데일리 플래그 true 변경됩니다.")
             elif '오늘' in nouns:
                 self.daily = True
+                self.choice = True
                 print('오늘 날씨 출력')
-                print("데일리 플래그 true 변경됩니다.")
                 self.local.fetchWeatherData()
                 self.local.printTodayWeather()
             else:
                 self.daily = True
+                self.choice = True
                 print('오늘 날씨 출력')
-                print("데일리 플래그 true 변경됩니다.")
                 self.local.fetchWeatherData()
                 self.local.printTodayWeather()
 
@@ -178,22 +185,15 @@ class SpeechToText:
 
         for i, (word, pos) in enumerate(pos_result):
             if i == last_verb_index:
-                if self.process_emergency(word):
-                    return True
-                elif self.process_schedule(word, nouns):
-                    return True
-                elif self.process_alarm(word, nouns):
-                    return True
-                elif self.process_weather(word, nouns):
-                    return True
+                self.process_emergency(word)
+                self.process_schedule(word, nouns)
+                self.process_alarm(word, nouns)
+                self.process_weather(word, nouns)
                 break
         else:
-            if self.process_emergency(verbs):
-                return True
-            elif self.process_weather(None, nouns):
-                return True
-
-        return False
+            if self.choice == False:
+                self.process_emergency(verbs)
+                self.process_weather(None, nouns)
 
     def transcribe_streaming(self):
         while True:
@@ -263,12 +263,7 @@ class SpeechToText:
 
                         command_result = self.process_command(transcript)
 
-                        if self.daily == True:
-                            print(f"로컬 처리 결과: {transcript}")
-                            print("출력이후 데일리 플래그 false 변경됩니다.")
-                            return
-
-                        else:
+                        if self.daily == False:
                             if "곰돌아" in transcript or "공돌아" in transcript or "곤도라" in transcript or "곰도라" in transcript or "곰돌 아" in transcript:
                                 self.come_transcript = transcript
                                 print(f"들어온 질문: {self.come_transcript}")
@@ -280,7 +275,12 @@ class SpeechToText:
                             else:
                                 print(f"무시된 음성 입력: {transcript}")
 
-                        self.daily = False
+                        else:
+                            print(f"로컬 처리 결과: {transcript}")
+                            self.daily = False
+                            self.choice = False
+                            print("로컬 출력이후 daily, choice 가 false로 변경됩니다.")
+                            return
 
                 print(f"스트림 마지막 음성 입력 : {self.last_input_time}")
                 print(f"스트림 현재 시간 : {time.time()}")
@@ -423,9 +423,6 @@ def main():
     stt = SpeechToText()
     gpt = GPTResponse()
     tts = TextToSpeech()
-
-    stt_thread = threading.Thread(target=transcribe_streaming, args=(stt, gpt, tts))
-    gpt_thread = threading.Thread(target=process_gpt, args=(gpt,))
 
     while True:
         transcript = stt.transcribe_streaming()
