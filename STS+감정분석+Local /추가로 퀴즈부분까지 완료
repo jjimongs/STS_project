@@ -43,7 +43,7 @@ class DetectEmotion:
 
 class SpeechToText:
     def __init__(self):
-        #os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "C:\\Users\\user\\Json_key\\STT_key\\sigma-kayak-421806-2be227c3a876.json"
+        #os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "C:\\Users\\grpug\\Json_key\\stt_json_key\\careful-hangar-423707-k6-43fb48a2baff.json"
         os.environ[
             "GOOGLE_APPLICATION_CREDENTIALS"] = "C:\\Users\\user\\Json_key\\STT_key\\careful-hangar-423707-k6-43fb48a2baff.json"
         self.client = speech.SpeechClient()
@@ -493,7 +493,7 @@ class TextToSpeech:
         while stt.stream_use:
             time.sleep(0.1)
         #os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "C:\\Users\\wwsgb\\Json_key\\tts_json_key\\sigma-kayak-421806-c28bf22ca0f0.json"
-        #os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "/home/pi/ElderlyCareRobot/json/sigma-kayak-421806-c28bf22ca0f0.json"
+        #os.environ["GOOGLE_APPLICATION_CREDENTIALS"] ="C:\\Users\\grpug\\Json_key\\tts_json_key\\careful-hangar-423707-k6-f3a7f26801af.json"
         os.environ[
             "GOOGLE_APPLICATION_CREDENTIALS"] = "C:\\Users\\user\\Json_key\\TTS_key\\careful-hangar-423707-k6-f3a7f26801af.json"
         tts_client = texttospeech.TextToSpeechClient()
