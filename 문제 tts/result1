@@ -200,18 +200,15 @@ class SpeechToText(metaclass=SingletonMeta):
             self.daily = True
             self.bear = True
             selected_quizzes = local.select_random_quizzes()
+
             try:
                 for quiz in selected_quizzes:
                     question = quiz[0]
                     print(f"Question: {question}")  # 질문 출력
                     answer = quiz[1]
                     print(f"Answer: {answer}")  # 답 출력
-                    user_answer = self.transcribe_answer()
-                    if user_answer['transcript'].lower() == answer.lower():
-                        return {'type': 'quiz', 'result': 'correct', 'response': '정답입니다!'}
-                    else:
-                        return {'type': 'quiz', 'result': 'incorrect', 'response': f'오답입니다. 정답은 {answer}입니다.'}
-            
+                    return {'question': question, 'answer': answer}
+
             except Exception as e:
                 return None
         else:
