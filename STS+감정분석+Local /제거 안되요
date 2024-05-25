@@ -1,0 +1,152 @@
+ """ async def transcribe_streaming(self):
+        from Local import Local
+        local = Local().get_instance()
+        task_manager = TaskManager.get_instance()
+
+
+        # 비동기 태스크 관리
+        async def manage_tasks():
+            while True:
+                if not task_manager.task_in_progress:
+                    if time.time() - self.last_response_time >= 15:
+                        print("check_alone 실행됩니다.")
+                        self.check_alone1()
+                        self.last_response_time = time.time()
+
+                    if self.alone_Flag == True:
+                        print("1분 체크 합니다.")
+                        if time.time() - self.one_minutes_time <= 60:
+                            local.checkStateQuestion()
+                            self.alone_Flag = False
+                            self.one_minutes_time = time.time()
+                        else:
+                            local.checkStateQuestion1()
+                            self.alone_Flag = False
+                            self.one_minutes_time = time.time()
+
+                    if not task_manager.task_queue.empty():
+                        print("Processing tasks...")
+                        await task_manager.process_tasks()
+                await asyncio.sleep(1)  # 태스크 확인 간격
+
+        # 음성 스트리밍 처리
+        async def process_audio_stream():
+            while True:
+                if not task_manager.task_in_progress:
+                    print("음성 인식을 시작합니다. (텍스트로 변환 중)")
+
+                    if not self.stream_use:
+                        self.setup_audio_stream()
+
+                    if self.stream is not None and self.stream.is_active() and not self.tts.is_speaking:
+                        noise_level = self.measure_ambient_noise()
+                        speech_contexts = self.adjust_recognition_sensitivity(noise_level)
+
+                        if noise_level < 0.1:
+                            self.stream.input_volume_float = 1.0
+                        elif noise_level < 0.3:
+                            self.stream.input_volume_float = 0.7
+                        else:
+                            self.stream.input_volume_float = 0.4
+
+                        config = speech.RecognitionConfig(
+                            encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
+                            sample_rate_hertz=16000,
+                            language_code="ko-KR",
+                            metadata=speech.RecognitionMetadata(
+                                interaction_type=speech.RecognitionMetadata.InteractionType.VOICE_SEARCH,
+                                microphone_distance=speech.RecognitionMetadata.MicrophoneDistance.NEARFIELD,
+                                original_media_type=speech.RecognitionMetadata.OriginalMediaType.AUDIO,
+                                recording_device_type=speech.RecognitionMetadata.RecordingDeviceType.SMARTPHONE,
+                            ),
+                            speech_contexts=speech_contexts
+                        )
+
+                        streaming_config = speech.StreamingRecognitionConfig(config=config, interim_results=True)
+
+                        def generate_requests():
+                            start_time = time.time()
+                            while time.time() - start_time < 300:
+                                data = self.stream.read(1024, exception_on_overflow=False)
+                                yield speech.StreamingRecognizeRequest(audio_content=data)
+
+                        requests = generate_requests()
+                        responses = self.client.streaming_recognize(streaming_config, requests)
+
+                        for response in responses:
+                            #print("response")
+                            if not response.results:
+                                continue
+
+                            result = response.results[-1]
+
+                            if result.is_final:
+                                transcript = result.alternatives[0].transcript
+                                self.last_input_time = time.time()
+
+                                if "잘게" in transcript or "외출 다녀올게" in transcript:
+                                    self.sleeping = True
+                                    print("모드 비활성화")
+                                    local.state_ref.update({
+                                        'currentState': 4
+                                    })
+                                    task_manager.set_user_status(4)
+                                    return None
+                                elif "일어났어" in transcript or "다녀왔어" in transcript:
+                                    self.sleeping = False
+                                    print("모드 활성화, 다시 정상작동 시작합니다.")
+                                    local.state_ref.update({
+                                        'currentState': 1
+                                    })
+                                    task_manager.set_user_status(1)
+                                    local.ProcessRecentAudio()
+                                    return None
+
+                                if self.sleeping:
+                                    print("모드 비활성화 중입니다. GPT 요청을 건너뜁니다.")
+                                    return None
+
+                                self.process_command(transcript)
+                                self.process_command1(transcript)
+
+                                if self.daily == False and self.bear == False:
+                                    if "곰돌아" in transcript or "공돌아" in transcript or "곤도라" in transcript or "곰도라" in transcript or "곰돌 아" in transcript or "구글아" in transcript:
+                                        self.come_transcript = transcript
+                                        print(f"들어온 질문: {self.come_transcript}")
+                                        clean_transcript = transcript.replace("곰돌아", "").replace("공돌아", "").replace(
+                                            "곤도라",
+                                            "").replace(
+                                            "곰도라", "").replace("곰돌 아", "").strip()
+                                        self.transcript = clean_transcript
+                                        return self.transcript
+                                    else:
+                                        print(f"무시된 음성 입력: {transcript}")
+
+                                else:
+                                    print(f"로컬 처리 결과: {transcript}")
+                                    self.daily = False
+                                    self.choice = False
+                                    self.bear = False
+                                    # print("로컬 출력이후 daily, choice 가 false로 변경됩니다.")
+                                    return
+
+                            # 비동기적으로 잠시 대기하여 다른 작업 처리 기회 제공
+                            await asyncio.sleep(0.1)
+
+                        if time.time() - self.last_input_time > 300:
+                            print(f"5분 동안 말이 없어 재시작합니다. 경과 시간: {time.time() - self.last_input_time}초")
+                            self.restart_audio_stream()
+                            time.sleep(0.25)
+                            self.pyaudio_instance.terminate()
+                            time.sleep(0.15)
+                            self.setup_audio_stream()
+                            self.last_input_time = time.time()
+                            print(f"오디오 스트림 재시작 시간: {self.last_input_time}")
+
+                if not self.stream.is_active() or self.tts.is_speaking:
+                    print("음성 인식이 중단되었습니다.")
+                    await asyncio.sleep(0.15)
+
+        # 동시에 태스크 관리와 음성 스트리밍 처리
+        await asyncio.gather(manage_tasks(), process_audio_stream())
+"""
